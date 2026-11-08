@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -30,7 +30,7 @@ jobs:
         run: |
           node -p "'node ' + process.version + ' ' + process.platform + '-' + process.arch"
           echo "PROCESSOR_ARCHITECTURE=$PROCESSOR_ARCHITECTURE"
-          git log --oneline -3
+          git log --oneline -4
 
       - name: Install turbo-vsc dependencies
         shell: bash
@@ -46,7 +46,7 @@ jobs:
         working-directory: packages/turbo-vsc
         run: |
           cp src/turbo-discovery.ts "$RUNNER_TEMP/turbo-discovery.fixed.ts"
-          git show HEAD~2:packages/turbo-vsc/src/turbo-discovery.ts > src/turbo-discovery.ts
+          git show efd19aa916:packages/turbo-vsc/src/turbo-discovery.ts > src/turbo-discovery.ts
           node --import tsx --test src/turbo-discovery.test.ts || echo "EXPECTED: new tests fail against main"
           cp "$RUNNER_TEMP/turbo-discovery.fixed.ts" src/turbo-discovery.ts
 
@@ -70,7 +70,7 @@ jobs:
         run: |
           F="$RUNNER_TEMP/fixtures"
           mkdir -p "$RUNNER_TEMP/main"
-          git show HEAD~2:packages/turbo-vsc/src/turbo-discovery.ts > "$RUNNER_TEMP/main/turbo-discovery.ts"
+          git show efd19aa916:packages/turbo-vsc/src/turbo-discovery.ts > "$RUNNER_TEMP/main/turbo-discovery.ts"
           echo "===== main ====="
           node --import tsx ../../.github/verify-turbo-vsc/repro.mjs "$RUNNER_TEMP/main/turbo-discovery.ts" "$F"
           echo "===== this branch ====="
