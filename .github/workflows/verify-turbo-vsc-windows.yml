@@ -91,7 +91,7 @@ jobs:
               const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });
               child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
               let out = "";
-              child.stdout.on("data", (d) => { out += d; if (out.includes("\"id\":1")) { console.log("initialize answered:", out.includes("capabilities")); child.kill(); } });
-              setTimeout(() => { console.log("timeout; got:", out.slice(0, 200)); child.kill(); process.exitCode = 1; }, 20000);
+              const timer = setTimeout(() => { console.log("timeout; got:", out.slice(0, 200)); child.kill(); process.exit(1); }, 20000);
+                child.stdout.on("data", (d) => { out += d; if (out.includes("\"id\":1")) { clearTimeout(timer); const ok = out.includes("capabilities"); console.log("initialize answered:", ok); child.kill(); process.exit(ok ? 0 : 1); } });
             })();
           '
