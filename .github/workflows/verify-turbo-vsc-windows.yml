@@ -79,19 +79,4 @@ jobs:
       - name: LSP initialize through the resolved binary
         shell: bash
         working-directory: packages/turbo-vsc
-        run: |
-          node --import tsx -e '
-            const cp = require("node:child_process");
-            const path = require("node:path");
-            (async () => {
-              const { findInstalledTurboLsp } = await import(require("node:url").pathToFileURL(path.resolve("src/turbo-discovery.ts")).href);
-              const bin = await findInstalledTurboLsp({ workspaceRoot: path.join(process.env.RUNNER_TEMP, "fixtures", "ws-pnpm"), log: () => {} });
-              console.log("binary:", bin && path.basename(path.dirname(path.dirname(bin))) + "/bin/" + path.basename(bin));
-              const child = cp.spawn(bin, ["__internal_lsp"], { stdio: ["pipe", "pipe", "inherit"] });
-              const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });
-              child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-              let out = "";
-              const timer = setTimeout(() => { console.log("timeout; got:", out.slice(0, 200)); child.kill(); process.exit(1); }, 20000);
-                child.stdout.on("data", (d) => { out += d; if (out.includes("\"id\":1")) { clearTimeout(timer); const ok = out.includes("capabilities"); console.log("initialize answered:", ok); child.kill(); process.exit(ok ? 0 : 1); } });
-            })();
-          '
+        run: node --import tsx ../../.github/verify-turbo-vsc/lsp-initialize.mjs src/turbo-discovery.ts "$RUNNER_TEMP/fixtures/ws-pnpm"
