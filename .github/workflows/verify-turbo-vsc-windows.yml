@@ -1,0 +1,97 @@
+# Temporary verification workflow for vercel/turborepo#14960 (fork-only branch, not part of the PR).
+name: verify turbo-vsc Windows shim resolution
+
+on:
+  push:
+    branches: [verify/turbo-vsc-windows-x64]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Runner info
+        shell: bash
+        run: |
+          node -p "'node ' + process.version + ' ' + process.platform + '-' + process.arch"
+          echo "PROCESSOR_ARCHITECTURE=$PROCESSOR_ARCHITECTURE"
+          git log --oneline -3
+
+      - name: Install turbo-vsc dependencies
+        shell: bash
+        run: npx -y pnpm@12.0.0 install --frozen-lockfile --ignore-scripts --filter turbo-vsc...
+
+      - name: Unit tests (this branch)
+        shell: bash
+        working-directory: packages/turbo-vsc
+        run: node --import tsx --test src/turbo-discovery.test.ts
+
+      - name: Unit tests (new tests against main's turbo-discovery.ts)
+        shell: bash
+        working-directory: packages/turbo-vsc
+        run: |
+          cp src/turbo-discovery.ts "$RUNNER_TEMP/turbo-discovery.fixed.ts"
+          git show HEAD~2:packages/turbo-vsc/src/turbo-discovery.ts > src/turbo-discovery.ts
+          node --import tsx --test src/turbo-discovery.test.ts || echo "EXPECTED: new tests fail against main"
+          cp "$RUNNER_TEMP/turbo-discovery.fixed.ts" src/turbo-discovery.ts
+
+      - name: Real turbo installs (pnpm and npm workspaces, turbo@2.11.10)
+        shell: bash
+        run: |
+          F="$RUNNER_TEMP/fixtures"
+          for ws in ws-pnpm ws-npm; do
+            mkdir -p "$F/$ws"
+            printf '{"name":"%s","private":true,"devDependencies":{"turbo":"2.11.10"}}\n' "$ws" > "$F/$ws/package.json"
+            printf '{"$schema":"https://turborepo.com/schema.json","tasks":{}}\n' > "$F/$ws/turbo.json"
+          done
+          (cd "$F/ws-pnpm" && npx -y pnpm@12.0.0 install --ignore-scripts)
+          (cd "$F/ws-npm" && npm install --ignore-scripts --no-audit --no-fund)
+          ls "$F/ws-pnpm/node_modules/.bin" | grep -i turbo
+          ls "$F/ws-npm/node_modules/@turbo"
+
+      - name: findInstalledTurboLsp, main vs this branch
+        shell: bash
+        working-directory: packages/turbo-vsc
+        run: |
+          F="$RUNNER_TEMP/fixtures"
+          mkdir -p "$RUNNER_TEMP/main"
+          git show HEAD~2:packages/turbo-vsc/src/turbo-discovery.ts > "$RUNNER_TEMP/main/turbo-discovery.ts"
+          echo "===== main ====="
+          node --import tsx ../../.github/verify-turbo-vsc/repro.mjs "$RUNNER_TEMP/main/turbo-discovery.ts" "$F"
+          echo "===== this branch ====="
+          node --import tsx ../../.github/verify-turbo-vsc/repro.mjs src/turbo-discovery.ts "$F"
+
+      - name: LSP initialize through the resolved binary
+        shell: bash
+        working-directory: packages/turbo-vsc
+        run: |
+          node --import tsx -e '
+            const cp = require("node:child_process");
+            const path = require("node:path");
+            (async () => {
+              const { findInstalledTurboLsp } = await import(require("node:url").pathToFileURL(path.resolve("src/turbo-discovery.ts")).href);
+              const bin = await findInstalledTurboLsp({ workspaceRoot: path.join(process.env.RUNNER_TEMP, "fixtures", "ws-pnpm"), log: () => {} });
+              console.log("binary:", bin && path.basename(path.dirname(path.dirname(bin))) + "/bin/" + path.basename(bin));
+              const child = cp.spawn(bin, ["__internal_lsp"], { stdio: ["pipe", "pipe", "inherit"] });
+              const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } });
+              child.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+              let out = "";
+              child.stdout.on("data", (d) => { out += d; if (out.includes("\"id\":1")) { console.log("initialize answered:", out.includes("capabilities")); child.kill(); } });
+              setTimeout(() => { console.log("timeout; got:", out.slice(0, 200)); child.kill(); process.exitCode = 1; }, 20000);
+            })();
+          '
